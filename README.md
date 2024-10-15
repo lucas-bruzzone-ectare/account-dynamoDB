@@ -1,72 +1,103 @@
-# Conta Corrente com DynamoDB
+# Gerenciador de Contas Corrente
 
-Este projeto é uma implementação de um sistema de contas correntes usando o Amazon DynamoDB como banco de dados. Ele permite criar contas, realizar transações (créditos e débitos), e consultar o histórico de transações.
+Este projeto é um sistema simples de gerenciamento de contas correntes usando o AWS DynamoDB. Permite criar contas, realizar transações (créditos e débitos), consultar saldos, reverter transações e buscar o histórico de transações.
 
 ## Funcionalidades
 
-- Criar contas com saldo inicial.
-- Inserir transações (créditos e débitos).
-- Consultar saldo atual de uma conta.
-- Buscar histórico de transações, incluindo paginação.
-- Reverter transações específicas.
-- Verificar saldo disponível para uma transação.
-- Gerar relatórios simples de transações em um período específico.
+- **Criar Conta:** Cria uma nova conta com um saldo inicial.
+- **Inserir Transação:** Insere transações de crédito ou débito e atualiza o saldo da conta.
+- **Consultar Saldo:** Consulta o saldo atual da conta.
+- **Buscar Histórico de Transações:** Busca e exibe o histórico de transações realizadas.
+- **Reverter Transação:** Reverte uma transação específica, ajustando o saldo da conta.
+- **Verificar Saldo Disponível:** Verifica se há saldo disponível para uma transação específica.
+- **Buscar Histórico Paginado:** Permite a busca do histórico de transações com paginação.
 
 ## Pré-requisitos
 
-Antes de começar, você precisará ter:
+Para executar este código, você precisará de:
 
-- Python 3.x instalado.
-- A biblioteca `boto3` instalada. Você pode instalá-la usando o seguinte comando:
+- Python 3.x
+- Boto3 (biblioteca AWS SDK para Python)
+- Conta da AWS com acesso ao DynamoDB
+- Configurar credenciais AWS (usando o arquivo `~/.aws/credentials` ou variáveis de ambiente)
+
+## Instalação
+
+1. Clone este repositório:
+
+   ```bash
+   git clone <URL_DO_REPOSITORIO>
+   cd <NOME_DO_DIRETORIO>
+   ```
+
+2. Instale as dependências necessárias:
+
+   ```bash
+   pip install boto3
+   ```
+
+3. Crie uma tabela no DynamoDB chamada `ContasCorrente` com a seguinte estrutura:
+
+   - **Partition Key:** `PK` (String)
+   - **Sort Key:** `SK` (String)
+
+## Uso
+
+Para executar o código, basta rodar o script principal:
 
 ```bash
-pip install boto3
+python poc.py
 ```
 
-- Acesso ao AWS e configurações adequadas para o DynamoDB.
+O exemplo de uso no final do script principal demonstra como criar uma conta, realizar transações, consultar saldo, reverter uma transação, verificar saldo disponível e buscar histórico paginado.
 
-## Estrutura do Código
+### Exemplo de Uso
 
-O código principal está dividido em várias funções que executam tarefas específicas relacionadas à gestão de contas correntes:
+O código no final do script principal oferece um exemplo de uso das funcionalidades. Aqui está uma breve descrição do que ele faz:
 
-### Funções Principais
+1. Cria uma nova conta para um titular chamado "João Silva" com um saldo inicial de R$1000,00.
+2. Insere uma transação de crédito de R$200,00 e uma transação de débito de R$50,00.
+3. Consulta e imprime o saldo atual da conta.
+4. Busca e imprime o histórico de transações realizadas.
+5. Reverte a última transação do histórico.
+6. Verifica se há saldo disponível para uma transação de R$50,00.
+7. Busca e imprime o histórico de transações com paginação.
 
-- **`criar_conta(nome_titular, saldo_inicial)`**
-  - Cria uma nova conta com um saldo inicial especificado.
-  
-- **`inserir_transacao(id_conta, valor, tipo, descricao)`**
-  - Insere uma nova transação (crédito ou débito) e atualiza o saldo da conta correspondente.
+## Funções Principais
 
-- **`consultar_saldo(id_conta)`**
-  - Retorna o saldo atual de uma conta.
+### `criar_conta(nome_titular, saldo_inicial)`
 
-- **`buscar_historico_transacoes(id_conta, limit=10)`**
-  - Busca o histórico de transações para uma conta, limitando o número de resultados.
+Cria uma nova conta com um saldo inicial.
 
-- **`verificar_saldo_disponivel(id_conta, valor)`**
-  - Verifica se há saldo suficiente na conta para realizar uma transação.
+- **Parâmetros:**
+  - `nome_titular` (str): Nome do titular da conta.
+  - `saldo_inicial` (float): Saldo inicial da conta.
+- **Retorna:** ID da conta criada.
 
-- **`reverter_transacao(id_conta, sk_transacao)`**
-  - Reverte uma transação específica, ajustando o saldo da conta.
+### `inserir_transacao(id_conta, valor, tipo, descricao)`
 
-- **`gerar_relatorio_simples(id_conta, periodo_dias=30)`**
-  - Gera um relatório simples com agregações básicas sobre transações em um período específico.
+Insere uma nova transação e atualiza o saldo da conta.
 
-## Demonstração
+- **Parâmetros:**
+  - `id_conta` (str): ID da conta.
+  - `valor` (float): Valor da transação.
+  - `tipo` (str): Tipo da transação ('credito' ou 'debito').
+  - `descricao` (str): Descrição da transação.
+- **Retorna:** Novo saldo após a transação.
 
-No bloco `if __name__ == "__main__":`, uma demonstração completa das funcionalidades é executada. As etapas incluem:
+### `consultar_saldo(id_conta)`
 
-1. Criar contas para dois usuários (Alice e Bob).
-2. Consultar os saldos iniciais das contas.
-3. Realizar transações de crédito e débito.
-4. Transferir dinheiro entre as contas de Alice e Bob.
-5. Consultar saldos após as transações.
-6. Buscar histórico de transações com paginação.
-7. Reverter uma transação específica.
-8. Verificar se há saldo disponível para uma transação.
-9. Gerar um relatório simples sobre transações nos últimos 7 dias.
-10. Consultar saldos finais das contas.
+Consulta o saldo atual da conta.
 
-## Conclusão
+- **Parâmetros:**
+  - `id_conta` (str): ID da conta.
+- **Retorna:** Saldo atual da conta.
 
-Este projeto fornece uma base sólida para a gestão de contas correntes utilizando o DynamoDB. Você pode expandir suas funcionalidades, como adicionar autenticação, melhorar a interface de usuário ou integrar com outras APIs.
+### `buscar_historico_transacoes(id_conta, limit=10)`
+
+Busca o histórico de transações por conta.
+
+- **Parâmetros:**
+  - `id_conta` (str): ID da conta.
+  - `limit` (int): Limite de transações a serem retornadas.
+- **Retorna:** Lista de transações.
