@@ -1,93 +1,80 @@
-Explicação detalhada da estrutura:
+# Conta Corrente com DynamoDB
 
-Tabela Principal (ContasCorrente):
-A tabela principal usa uma estrutura de chave composta:
+Este projeto é uma implementação de um sistema de contas correntes usando o Amazon DynamoDB como banco de dados. Ele permite criar contas, realizar transações (créditos e débitos), transferências entre contas, e consultar o histórico de transações.
 
-Chave de Partição (PK): CONTA#<id_conta>
-Chave de Ordenação (SK): Varia entre "METADATA" e "TRANS#<timestamp>"
+## Funcionalidades
 
-Esta estrutura permite armazenar eficientemente tanto os metadados da conta quanto as transações associadas a ela.
-a) Metadados da Conta:
+- Criar contas com saldo inicial.
+- Inserir transações (créditos e débitos).
+- Realizar transferências entre contas.
+- Consultar saldo atual de uma conta.
+- Buscar histórico de transações, incluindo paginação.
+- Reverter transações específicas.
+- Verificar saldo disponível para uma transação.
+- Gerar relatórios simples de transações em um período específico.
 
-PK: CONTA#<id_conta>
-SK: METADATA
-Atributos: nome_titular, saldo_atual, status
+## Pré-requisitos
 
-Exemplo:
-{
-PK: "CONTA#123",
-SK: "METADATA",
-nome_titular: "João Silva",
-saldo_atual: 1000.00,
-status: "ativo"
-}
-b) Transações:
+Antes de começar, você precisará ter:
 
-PK: CONTA#<id_conta>
-SK: TRANS#<timestamp>
-Atributos: valor, tipo (crédito/débito), descricao
+- Python 3.x instalado.
+- A biblioteca `boto3` instalada. Você pode instalá-la usando o seguinte comando:
 
-Exemplo:
-{
-PK: "CONTA#123",
-SK: "TRANS#2024-10-15T14:30:00",
-valor: 500.00,
-tipo: "crédito",
-descricao: "Depósito"
-}
-Índice Secundário Global (GSI_TipoTransacao):
-Este GSI permite consultas eficientes por tipo de transação:
+```bash
+pip install boto3
+```
 
-PK: CONTA#<id_conta>
-SK: TIPO#<tipo_transacao>
+- Acesso ao AWS e configurações adequadas para o DynamoDB.
 
-Exemplo de item no GSI:
-{
-PK: "CONTA#123",
-SK: "TIPO#credito",
-valor: 500.00,
-timestamp: "2024-10-15T14:30:00",
-descricao: "Depósito"
-}
+## Estrutura do Código
 
-Implementação dos padrões de acesso:
+O código principal está dividido em várias funções que executam tarefas específicas relacionadas à gestão de contas correntes:
 
-Inserir nova transação:
+### Funções Principais
 
-Crie um novo item na tabela principal com PK=CONTA#<id_conta> e SK=TRANS#<timestamp>
-Atualize o item de metadados (SK=METADATA) para refletir o novo saldo
-Adicione um item correspondente no GSI_TipoTransacao
+- **`criar_conta(nome_titular, saldo_inicial)`**
+  - Cria uma nova conta com um saldo inicial especificado.
+  
+- **`inserir_transacao(id_conta, valor, tipo, descricao)`**
+  - Insere uma nova transação (crédito ou débito) e atualiza o saldo da conta correspondente.
 
+- **`consultar_saldo(id_conta)`**
+  - Retorna o saldo atual de uma conta.
 
-Consultar saldo atual:
+- **`buscar_historico_transacoes(id_conta, limit=10)`**
+  - Busca o histórico de transações para uma conta, limitando o número de resultados.
 
-Faça uma operação GetItem com PK=CONTA#<id_conta> e SK=METADATA
+- **`verificar_saldo_disponivel(id_conta, valor)`**
+  - Verifica se há saldo suficiente na conta para realizar uma transação.
 
+- **`transferir_entre_contas(id_conta_origem, id_conta_destino, valor, descricao)`**
+  - Realiza uma transferência entre duas contas, debitando uma e creditando a outra.
 
-Buscar histórico de transações:
+- **`reverter_transacao(id_conta, sk_transacao)`**
+  - Reverte uma transação específica, ajustando o saldo da conta.
 
-Execute uma Query na tabela principal usando PK=CONTA#<id_conta> e SK começando com "TRANS#"
-Use ScanIndexForward para controlar a ordem (crescente ou decrescente)
+- **`gerar_relatorio_simples(id_conta, periodo_dias=30)`**
+  - Gera um relatório simples com agregações básicas sobre transações em um período específico.
 
+## Demonstração
 
-Atualizar saldo após transação:
+No bloco `if __name__ == "__main__":`, uma demonstração completa das funcionalidades é executada. As etapas incluem:
 
-Utilize uma operação UpdateItem no item de metadados (SK=METADATA)
-Use expressões de atualização condicional para garantir consistência
+1. Criar contas para dois usuários (Alice e Bob).
+2. Consultar os saldos iniciais das contas.
+3. Realizar transações de crédito e débito.
+4. Transferir dinheiro entre as contas de Alice e Bob.
+5. Consultar saldos após as transações.
+6. Buscar histórico de transações com paginação.
+7. Reverter uma transação específica.
+8. Verificar se há saldo disponível para uma transação.
+9. Gerar um relatório simples sobre transações nos últimos 7 dias.
+10. Consultar saldos finais das contas.
 
+## Conclusão
 
-Verificar saldo disponível:
+Este projeto fornece uma base sólida para a gestão de contas correntes utilizando o DynamoDB. Você pode expandir suas funcionalidades, como adicionar autenticação, melhorar a interface de usuário ou integrar com outras APIs.
 
-Mesma operação da consulta de saldo atual (GetItem)
+## Licença
 
-
-
-Vantagens desta modelagem:
-
-Escalabilidade: O uso do ID da conta como chave de partição distribui eficientemente os dados entre as partições do DynamoDB.
-Velocidade: Acesso rápido aos dados da conta e transações usando a combinação de PK e SK. Consultas eficientes por tipo de transação usando o GSI.
-Simplicidade: Estrutura clara e direta, facilitando operações CRUD e manutenção.
-Flexibilidade: O modelo suporta facilmente a adição de novos tipos de transações ou atributos adicionais sem alterações estruturais.
-Consistência: Manter os metadados da conta (incluindo saldo) no mesmo item que as transações permite atualizações atômicas e consistentes.
-
-Esta estrutura otimizada para o DynamoDB permite operações eficientes e escaláveis para uma POC de conta corrente, atendendo aos padrões de acesso especificados e aproveitando as características únicas do banco de dados NoSQL. Cop
+Este projeto está sob a Licença MIT - consulte o arquivo [LICENSE](LICENSE) para mais detalhes.
