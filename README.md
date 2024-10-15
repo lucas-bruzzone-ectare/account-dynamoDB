@@ -1,12 +1,11 @@
 # Conta Corrente com DynamoDB
 
-Este projeto é uma implementação de um sistema de contas correntes usando o Amazon DynamoDB como banco de dados. Ele permite criar contas, realizar transações (créditos e débitos), transferências entre contas, e consultar o histórico de transações.
+Este projeto é uma implementação de um sistema de contas correntes usando o Amazon DynamoDB como banco de dados. Ele permite criar contas, realizar transações (créditos e débitos), e consultar o histórico de transações.
 
 ## Funcionalidades
 
 - Criar contas com saldo inicial.
 - Inserir transações (créditos e débitos).
-- Realizar transferências entre contas.
 - Consultar saldo atual de uma conta.
 - Buscar histórico de transações, incluindo paginação.
 - Reverter transações específicas.
@@ -47,9 +46,6 @@ O código principal está dividido em várias funções que executam tarefas esp
 - **`verificar_saldo_disponivel(id_conta, valor)`**
   - Verifica se há saldo suficiente na conta para realizar uma transação.
 
-- **`transferir_entre_contas(id_conta_origem, id_conta_destino, valor, descricao)`**
-  - Realiza uma transferência entre duas contas, debitando uma e creditando a outra.
-
 - **`reverter_transacao(id_conta, sk_transacao)`**
   - Reverte uma transação específica, ajustando o saldo da conta.
 
@@ -74,7 +70,3 @@ No bloco `if __name__ == "__main__":`, uma demonstração completa das funcional
 ## Conclusão
 
 Este projeto fornece uma base sólida para a gestão de contas correntes utilizando o DynamoDB. Você pode expandir suas funcionalidades, como adicionar autenticação, melhorar a interface de usuário ou integrar com outras APIs.
-
-## Licença
-
-Este projeto está sob a Licença MIT - consulte o arquivo [LICENSE](LICENSE) para mais detalhes.

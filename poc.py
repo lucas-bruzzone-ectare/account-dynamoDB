@@ -19,7 +19,8 @@ def criar_conta(nome_titular, saldo_inicial):
         'SK': 'METADATA',
         'nome_titular': nome_titular,
         'saldo_atual': Decimal(str(saldo_inicial)),
-        'status': 'ativo'
+        'status': 'ativo',
+        'version': 1  # Inicializa a versão
     }
     table.put_item(Item=item)
     return id_conta
@@ -29,6 +30,11 @@ def inserir_transacao(id_conta, valor, tipo, descricao):
     Insere uma nova transação (crédito/débito) e atualiza o saldo.
     """
     timestamp = datetime.now().isoformat()
+    
+    # Obter a versão atual
+    response = table.get_item(Key={'PK': f'CONTA#{id_conta}', 'SK': 'METADATA'})
+    version = response['Item']['version']
+    
     transacao = {
         'PK': f'CONTA#{id_conta}',
         'SK': f'TRANS#{timestamp}',
@@ -38,19 +44,30 @@ def inserir_transacao(id_conta, valor, tipo, descricao):
         'GSI1PK': f'CONTA#{id_conta}',
         'GSI1SK': f'TIPO#{tipo}'
     }
-    
-    # Atualizar saldo
-    response = table.update_item(
-        Key={'PK': f'CONTA#{id_conta}', 'SK': 'METADATA'},
-        UpdateExpression='SET saldo_atual = saldo_atual + :val',
-        ExpressionAttributeValues={':val': Decimal(str(valor)) if tipo == 'credito' else Decimal(str(-valor))},
-        ReturnValues='UPDATED_NEW'
-    )
-    
-    # Inserir transação
-    table.put_item(Item=transacao)
-    
-    return response['Attributes']['saldo_atual']
+
+    # Atualizar saldo com controle de versão
+    try:
+        response = table.update_item(
+            Key={'PK': f'CONTA#{id_conta}', 'SK': 'METADATA'},
+            UpdateExpression='SET saldo_atual = saldo_atual + :val, version = version + :inc',
+            ExpressionAttributeValues={
+                ':val': Decimal(str(valor)) if tipo == 'credito' else Decimal(str(-valor)),
+                ':inc': 1,  # Incrementa a versão
+                ':current_version': version  # Verifica a versão atual
+            },
+            ConditionExpression='version = :current_version',  # Condição para verificar a versão
+            ReturnValues='UPDATED_NEW'
+        )
+        
+        # Inserir transação
+        table.put_item(Item=transacao)
+        
+        return response['Attributes']['saldo_atual']
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            raise Exception("Conflito de concorrência: outra operação atualizou a conta antes desta transação.")
+        else:
+            raise
 
 def consultar_saldo(id_conta):
     """
@@ -78,78 +95,6 @@ def verificar_saldo_disponivel(id_conta, valor):
     """
     saldo_atual = consultar_saldo(id_conta)
     return saldo_atual >= Decimal(str(valor))
-
-def transferir_entre_contas(id_conta_origem, id_conta_destino, valor, descricao):
-    """
-    Realiza uma transferência entre duas contas.
-    """
-    try:
-        dynamodb_client = boto3.client('dynamodb', region_name='us-west-2')
-
-        # Prepare the transaction statements
-        transaction_statements = [
-            {
-                'Statement': f"UPDATE ContasCorrente SET saldo_atual = saldo_atual - :val WHERE PK = :pk AND SK = :sk",
-                'Parameters': [
-                    {'N': str(valor)},
-                    {'S': f'CONTA#{id_conta_origem}'},
-                    {'S': 'METADATA'}
-                ]
-            },
-            {
-                'Statement': f"UPDATE ContasCorrente SET saldo_atual = saldo_atual + :val WHERE PK = :pk AND SK = :sk",
-                'Parameters': [
-                    {'N': str(valor)},
-                    {'S': f'CONTA#{id_conta_destino}'},
-                    {'S': 'METADATA'}
-                ]
-            }
-        ]
-        
-        # Execute the transaction
-        dynamodb_client.execute_transaction(TransactStatements=transaction_statements)
-
-        # Registrar transações
-        timestamp = datetime.now().isoformat()
-        
-        # Create the debit transaction for the origin account
-        dynamodb_client.put_item(
-            TableName='ContasCorrente',
-            Item={
-                'PK': {'S': f'CONTA#{id_conta_origem}'},
-                'SK': {'S': f'TRANS#{timestamp}'},
-                'tipo': {'S': 'debito'},
-                'valor': {'N': str(valor)},
-                'descricao': {'S': f'Transferência para conta {id_conta_destino}: {descricao}'},
-                'GSI1PK': {'S': f'CONTA#{id_conta_origem}'},
-                'GSI1SK': {'S': 'TIPO#debito'}
-            }
-        )
-
-        # Create the credit transaction for the destination account
-        dynamodb_client.put_item(
-            TableName='ContasCorrente',
-            Item={
-                'PK': {'S': f'CONTA#{id_conta_destino}'},
-                'SK': {'S': f'TRANS#{timestamp}'},
-                'tipo': {'S': 'credito'},
-                'valor': {'N': str(valor)},
-                'descricao': {'S': f'Transferência de conta {id_conta_origem}: {descricao}'},
-                'GSI1PK': {'S': f'CONTA#{id_conta_destino}'},
-                'GSI1SK': {'S': 'TIPO#credito'}
-            }
-        )
-
-        return True
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'TransactionCanceledException':
-            print("Saldo insuficiente para realizar a transferência.")
-        else:
-            print(f"Erro na transferência: {e}")
-        return False
-
-
-
 
 def buscar_historico_paginado(id_conta, limit=5, last_evaluated_key=None):
     """
@@ -183,12 +128,21 @@ def reverter_transacao(id_conta, sk_transacao):
     valor_reversao = valor_original
     tipo_reversao = 'credito' if tipo_original == 'debito' else 'debito'
     
+    # Obter a versão atual
+    response = table.get_item(Key={'PK': f'CONTA#{id_conta}', 'SK': 'METADATA'})
+    version = response['Item']['version']
+    
     try:
-        # Atualizar saldo
+        # Atualizar saldo com controle de versão
         response = table.update_item(
             Key={'PK': f'CONTA#{id_conta}', 'SK': 'METADATA'},
-            UpdateExpression='SET saldo_atual = saldo_atual + :val',
-            ExpressionAttributeValues={':val': valor_reversao if tipo_reversao == 'credito' else -valor_reversao},
+            UpdateExpression='SET saldo_atual = saldo_atual + :val, version = version + :inc',
+            ExpressionAttributeValues={
+                ':val': valor_reversao if tipo_reversao == 'credito' else -valor_reversao,
+                ':inc': 1,  # Incrementa a versão
+                ':current_version': version  # Verifica a versão atual
+            },
+            ConditionExpression='version = :current_version',  # Condição para verificar a versão
             ReturnValues='UPDATED_NEW'
         )
         
@@ -201,12 +155,16 @@ def reverter_transacao(id_conta, sk_transacao):
             'valor': valor_reversao,
             'descricao': f'Reversão de transação: {sk_transacao}',
             'GSI1PK': f'CONTA#{id_conta}',
-            'GSI1SK': f'TIPO#{tipo_reversao}'
+            'GSI1SK': f'TIPO#{tipo_reversao}',
+            'version': version + 1  # Atualiza a versão
         })
         
         return True, f"Transação revertida. Novo saldo: {response['Attributes']['saldo_atual']}"
-    except Exception as e:
-        return False, str(e)
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+            return False, "Conflito de concorrência: outra operação atualizou a conta antes da reversão."
+        else:
+            return False, str(e)
 
 def consultar_transacoes_por_periodo(id_conta, data_inicio, data_fim):
     """
@@ -244,57 +202,33 @@ def gerar_relatorio_simples(id_conta, periodo_dias=30):
 if __name__ == "__main__":
     print("Demonstração da POC de Conta Corrente com DynamoDB\n")
 
-    # 1. Criar contas
-    id_conta1 = criar_conta("Alice", 1000)
-    id_conta2 = criar_conta("Bob", 500)
-    print(f"Conta 1 (Alice) criada com ID: {id_conta1}")
-    print(f"Conta 2 (Bob) criada com ID: {id_conta2}")
+    # Criar uma conta
+    id_conta = criar_conta("João Silva", 1000)
+    print(f"Conta criada com ID: {id_conta}")
 
-    # 2. Consultar saldos iniciais
-    print(f"\nSaldo inicial Alice: R$ {consultar_saldo(id_conta1)}")
-    print(f"Saldo inicial Bob: R$ {consultar_saldo(id_conta2)}")
+    # Inserir transações
+    try:
+        inserir_transacao(id_conta, 200, 'credito', 'Depósito inicial')
+        print(f"Saldo após depósito: {consultar_saldo(id_conta)}")
 
-    # 3. Inserir transações
-    print("\nRealizando transações...")
-    inserir_transacao(id_conta1, 200, "credito", "Depósito")
-    inserir_transacao(id_conta1, 50, "debito", "Compra")
-    inserir_transacao(id_conta2, 100, "credito", "Recebimento")
+        inserir_transacao(id_conta, 150, 'debito', 'Pagamento de conta')
+        print(f"Saldo após pagamento: {consultar_saldo(id_conta)}")
 
-    # 4. Transferência entre contas
-    print("\nRealizando transferência de Alice para Bob...")
-    sucesso = transferir_entre_contas(id_conta1, id_conta2, 300, "Pagamento de aluguel")
-    if sucesso:
-        print("Transferência realizada com sucesso")
-    else:
-        print("Falha na transferência")
+    except Exception as e:
+        print(f"Erro: {e}")
 
-    # 5. Consultar saldos após transações
-    print(f"\nNovo saldo Alice: R$ {consultar_saldo(id_conta1)}")
-    print(f"Novo saldo Bob: R$ {consultar_saldo(id_conta2)}")
+    # Buscar histórico
+    transacoes = buscar_historico_transacoes(id_conta)
+    print(f"Histórico de transações: {transacoes}")
 
-    # 6. Buscar histórico paginado
-    print("\nHistórico de transações de Alice (paginado):")
-    transacoes, last_key = buscar_historico_paginado(id_conta1)
-    for t in transacoes:
-        print(f"  {t['SK']} - Tipo: {t['tipo']}, Valor: R$ {t['valor']}, Descrição: {t['descricao']}")
+    # Reverter transação
+    try:
+        resultado_reversao = reverter_transacao(id_conta, transacoes[0]['SK'])
+        print(resultado_reversao)
+        print(f"Saldo após reversão: {consultar_saldo(id_conta)}")
+    except Exception as e:
+        print(f"Erro ao reverter transação: {e}")
 
-    # 7. Reverter uma transação
-    if transacoes:
-        print("\nRevertendo a última transação de Alice...")
-        sucesso, mensagem = reverter_transacao(id_conta1, transacoes[0]['SK'])
-        print(mensagem)
-
-    # 8. Verificar saldo disponível
-    valor_verificacao = 800
-    disponivel = verificar_saldo_disponivel(id_conta1, valor_verificacao)
-    print(f"\nSaldo disponível para transação de R$ {valor_verificacao} na conta de Alice: {'Sim' if disponivel else 'Não'}")
-
-    # 9. Gerar relatório simples
-    print("\nRelatório simples da conta de Alice (últimos 7 dias):")
-    relatorio = gerar_relatorio_simples(id_conta1, 7)
-    for key, value in relatorio.items():
-        print(f"  {key}: {value}")
-
-    # 10. Consultar saldos finais
-    print(f"\nSaldo final Alice: R$ {consultar_saldo(id_conta1)}")
-    print(f"Saldo final Bob: R$ {consultar_saldo(id_conta2)}")
+    # Gerar relatório
+    relatorio = gerar_relatorio_simples(id_conta, periodo_dias=30)
+    print(f"Relatório Simples: {relatorio}")
