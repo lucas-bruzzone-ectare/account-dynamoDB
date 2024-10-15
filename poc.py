@@ -2,17 +2,32 @@ import boto3
 from boto3.dynamodb.conditions import Key
 from decimal import Decimal
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from botocore.exceptions import ClientError
+
 
 # Inicializar o cliente DynamoDB
 dynamodb = boto3.resource('dynamodb')
 table = dynamodb.Table('ContasCorrente')
 
+
+
 def criar_conta(nome_titular, saldo_inicial):
     """
     Cria uma nova conta com saldo inicial.
+    
+    Args:
+        nome_titular (str): Nome do titular da conta.
+        saldo_inicial (float): Saldo inicial da conta.
+
+    Returns:
+        str: ID da conta criada.
     """
+    if not isinstance(nome_titular, str) or not nome_titular.strip():
+        raise ValueError("O nome do titular deve ser uma string válida.")
+    if not isinstance(saldo_inicial, (int, float)) or saldo_inicial < 0:
+        raise ValueError("O saldo inicial deve ser um número não negativo.")
+
     id_conta = str(uuid.uuid4())
     item = {
         'PK': f'CONTA#{id_conta}',
@@ -28,13 +43,33 @@ def criar_conta(nome_titular, saldo_inicial):
 def inserir_transacao(id_conta, valor, tipo, descricao):
     """
     Insere uma nova transação (crédito/débito) e atualiza o saldo.
+
+    Args:
+        id_conta (str): ID da conta.
+        valor (float): Valor da transação.
+        tipo (str): Tipo da transação ('credito' ou 'debito').
+        descricao (str): Descrição da transação.
+
+    Returns:
+        Decimal: Novo saldo após a transação.
     """
+    if tipo not in ['credito', 'debito']:
+        raise ValueError("O tipo da transação deve ser 'credito' ou 'debito'.")
+    if not isinstance(valor, (int, float)) or valor <= 0:
+        raise ValueError("O valor da transação deve ser um número positivo.")
+
     timestamp = datetime.now().isoformat()
     
     # Obter a versão atual
     response = table.get_item(Key={'PK': f'CONTA#{id_conta}', 'SK': 'METADATA'})
     version = response['Item']['version']
     
+    # Verificar saldo disponível se for uma operação de débito
+    if tipo == 'debito':
+        saldo_atual = response['Item']['saldo_atual']
+        if saldo_atual < Decimal(str(valor)):
+            raise ValueError("Saldo insuficiente para a operação.")
+
     transacao = {
         'PK': f'CONTA#{id_conta}',
         'SK': f'TRANS#{timestamp}',
@@ -61,7 +96,7 @@ def inserir_transacao(id_conta, valor, tipo, descricao):
         
         # Inserir transação
         table.put_item(Item=transacao)
-        
+
         return response['Attributes']['saldo_atual']
     except ClientError as e:
         if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
@@ -72,15 +107,29 @@ def inserir_transacao(id_conta, valor, tipo, descricao):
 def consultar_saldo(id_conta):
     """
     Consulta o saldo atual da conta.
+
+    Args:
+        id_conta (str): ID da conta.
+
+    Returns:
+        Decimal: Saldo atual da conta.
     """
     response = table.get_item(
         Key={'PK': f'CONTA#{id_conta}', 'SK': 'METADATA'}
     )
-    return response['Item']['saldo_atual']
+    saldo = response['Item']['saldo_atual']
+    return saldo
 
 def buscar_historico_transacoes(id_conta, limit=10):
     """
     Busca o histórico de transações por conta.
+
+    Args:
+        id_conta (str): ID da conta.
+        limit (int): Limite de transações a serem retornadas.
+
+    Returns:
+        list: Lista de transações.
     """
     response = table.query(
         KeyConditionExpression=Key('PK').eq(f'CONTA#{id_conta}') & Key('SK').begins_with('TRANS#'),
@@ -92,6 +141,13 @@ def buscar_historico_transacoes(id_conta, limit=10):
 def verificar_saldo_disponivel(id_conta, valor):
     """
     Verifica se há saldo disponível para uma transação.
+
+    Args:
+        id_conta (str): ID da conta.
+        valor (float): Valor a ser verificado.
+
+    Returns:
+        bool: True se houver saldo disponível, False caso contrário.
     """
     saldo_atual = consultar_saldo(id_conta)
     return saldo_atual >= Decimal(str(valor))
@@ -99,6 +155,14 @@ def verificar_saldo_disponivel(id_conta, valor):
 def buscar_historico_paginado(id_conta, limit=5, last_evaluated_key=None):
     """
     Busca o histórico de transações com paginação.
+
+    Args:
+        id_conta (str): ID da conta.
+        limit (int): Limite de transações a serem retornadas.
+        last_evaluated_key (dict): Chave de início para a paginação.
+
+    Returns:
+        tuple: Lista de transações e última chave avaliada.
     """
     params = {
         'KeyConditionExpression': Key('PK').eq(f'CONTA#{id_conta}') & Key('SK').begins_with('TRANS#'),
@@ -114,6 +178,13 @@ def buscar_historico_paginado(id_conta, limit=5, last_evaluated_key=None):
 def reverter_transacao(id_conta, sk_transacao):
     """
     Reverte uma transação específica.
+
+    Args:
+        id_conta (str): ID da conta.
+        sk_transacao (str): Chave da transação a ser revertida.
+
+    Returns:
+        tuple: (bool, str) Status da reversão e mensagem.
     """
     # Buscar a transação original
     response = table.get_item(Key={'PK': f'CONTA#{id_conta}', 'SK': sk_transacao})
@@ -151,84 +222,73 @@ def reverter_transacao(id_conta, sk_transacao):
         table.put_item(Item={
             'PK': f'CONTA#{id_conta}',
             'SK': f'TRANS#{timestamp}',
+            'valor': Decimal(str(valor_reversao)),
             'tipo': tipo_reversao,
-            'valor': valor_reversao,
-            'descricao': f'Reversão de transação: {sk_transacao}',
+            'descricao': f'Reversão de: {transacao_original["descricao"]}',
             'GSI1PK': f'CONTA#{id_conta}',
-            'GSI1SK': f'TIPO#{tipo_reversao}',
-            'version': version + 1  # Atualiza a versão
+            'GSI1SK': f'TIPO#{tipo_reversao}'
         })
         
-        return True, f"Transação revertida. Novo saldo: {response['Attributes']['saldo_atual']}"
+        return True, "Transação revertida com sucesso"
     except ClientError as e:
-        if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
-            return False, "Conflito de concorrência: outra operação atualizou a conta antes da reversão."
-        else:
-            return False, str(e)
+        return False, str(e)
 
-def consultar_transacoes_por_periodo(id_conta, data_inicio, data_fim):
-    """
-    Consulta transações por período específico.
-    """
-    response = table.query(
-        KeyConditionExpression=Key('PK').eq(f'CONTA#{id_conta}') & 
-                               Key('SK').between(f'TRANS#{data_inicio.isoformat()}', f'TRANS#{data_fim.isoformat()}'),
-        ScanIndexForward=True  # ordem crescente de data
-    )
-    return response['Items']
+def imprimir_saldo(saldo):
+    """Imprime o saldo atual de forma formatada."""
+    print(f"\n{'='*20}\nSaldo atual: R${saldo:.2f}\n{'='*20}")
 
-def gerar_relatorio_simples(id_conta, periodo_dias=30):
-    """
-    Gera um relatório simples com agregações básicas.
-    """
-    data_fim = datetime.now()
-    data_inicio = data_fim - timedelta(days=periodo_dias)
-    
-    transacoes = consultar_transacoes_por_periodo(id_conta, data_inicio, data_fim)
-    
-    total_creditos = sum(float(t['valor']) for t in transacoes if t['tipo'] == 'credito')
-    total_debitos = sum(float(t['valor']) for t in transacoes if t['tipo'] == 'debito')
-    saldo_periodo = total_creditos - total_debitos
-    
-    return {
-        'periodo': f'{data_inicio.date()} a {data_fim.date()}',
-        'total_transacoes': len(transacoes),
-        'total_creditos': total_creditos,
-        'total_debitos': total_debitos,
-        'saldo_periodo': saldo_periodo
-    }
+def imprimir_historico(transacoes):
+    """Imprime o histórico de transações de forma organizada."""
+    print("\nHistórico de Transações:")
+    print('-' * 30)
+    for transacao in transacoes:
+        print(f"{transacao['tipo'].capitalize()} | Valor: R${transacao['valor']:.2f} | Descrição: {transacao['descricao']} | Data: {transacao['SK'].replace('TRANS#', '')}")
+    print('-' * 30)
 
-# Demonstração de todos os cenários
+def imprimir_resultado_reversao(mensagem):
+    """Imprime o resultado da reversão da transação."""
+    print("\nResultado da Reversão:")
+    print(f"{mensagem}\n{'='*20}")
+
+def imprimir_transacoes_paginadas(transacoes, last_key):
+    """Imprime as transações paginadas de forma organizada."""
+    print("\nTransações Paginadas:")
+    print('-' * 30)
+    for transacao in transacoes:
+        print(f"{transacao['tipo'].capitalize()} | Valor: R${transacao['valor']:.2f} | Descrição: {transacao['descricao']} | Data: {transacao['SK'].replace('TRANS#', '')}")
+    print('-' * 30)
+    if last_key:
+        print(f"Última chave avaliada: {last_key}\n{'='*20}")
+
+# Exemplo de uso com impressão formatada
 if __name__ == "__main__":
-    print("Demonstração da POC de Conta Corrente com DynamoDB\n")
-
     # Criar uma conta
-    id_conta = criar_conta("João Silva", 1000)
-    print(f"Conta criada com ID: {id_conta}")
+    id_conta = criar_conta("João Silva", 1000.00)
 
-    # Inserir transações
-    try:
-        inserir_transacao(id_conta, 200, 'credito', 'Depósito inicial')
-        print(f"Saldo após depósito: {consultar_saldo(id_conta)}")
 
-        inserir_transacao(id_conta, 150, 'debito', 'Pagamento de conta')
-        print(f"Saldo após pagamento: {consultar_saldo(id_conta)}")
+    inserir_transacao(id_conta, 200.00, 'credito', 'Depósito de salário')
+    inserir_transacao(id_conta, 50.00, 'debito', 'Compra no supermercado')
 
-    except Exception as e:
-        print(f"Erro: {e}")
 
-    # Buscar histórico
+    # Consultar saldo
+    saldo = consultar_saldo(id_conta)
+    imprimir_saldo(saldo)
+
+    # Buscar histórico de transações
     transacoes = buscar_historico_transacoes(id_conta)
-    print(f"Histórico de transações: {transacoes}")
+    imprimir_historico(transacoes)
 
-    # Reverter transação
-    try:
-        resultado_reversao = reverter_transacao(id_conta, transacoes[0]['SK'])
-        print(resultado_reversao)
-        print(f"Saldo após reversão: {consultar_saldo(id_conta)}")
-    except Exception as e:
-        print(f"Erro ao reverter transação: {e}")
+    # Reverter uma transação
+    if transacoes:
+        sk_transacao = transacoes[0]['SK']
+        status, mensagem = reverter_transacao(id_conta, sk_transacao)
+        imprimir_resultado_reversao(mensagem)
 
-    # Gerar relatório
-    relatorio = gerar_relatorio_simples(id_conta, periodo_dias=30)
-    print(f"Relatório Simples: {relatorio}")
+    # Verificar saldo disponível
+    saldo_disponivel = verificar_saldo_disponivel(id_conta, 50)
+    print(f"Saldo disponível para transação: {'Sim' if saldo_disponivel else 'Não'}")
+
+    # Buscar histórico paginado
+    transacoes_paginadas, last_key = buscar_historico_paginado(id_conta, limit=2)
+    imprimir_transacoes_paginadas(transacoes_paginadas, last_key)
+
