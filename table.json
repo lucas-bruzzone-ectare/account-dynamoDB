@@ -1,18 +1,19 @@
 [
     {
-        "IndexName": "GSI_TipoTransacao",
-        "KeySchema": [
-            {
-                "AttributeName": "GSI1PK",
-                "KeyType": "HASH"
-            },
-            {
-                "AttributeName": "GSI1SK",
-                "KeyType": "RANGE"
-            }
-        ],
-        "Projection": {
-            "ProjectionType": "ALL"
+      "IndexName": "GSI_TipoTransacao",
+      "KeySchema": [
+        {
+          "AttributeName": "GSI1PK",
+          "KeyType": "HASH"
+        },
+        {
+          "AttributeName": "GSI1SK",
+          "KeyType": "RANGE"
         }
+      ],
+      "Projection": {
+        "ProjectionType": "ALL"
+      }
     }
-]
+  ]
+  
